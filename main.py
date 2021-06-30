@@ -100,47 +100,57 @@ def main():
             return result
 
         img.img = white_balance(img.img)
-        b, g, r = cv2.split(img.img)
-        b = utils.lossy_normalize(b, 0.01, 0.1)
-        g = utils.lossy_normalize(g, 0.01, 0.0001)
-        r = utils.lossy_normalize(r, 0.01, 0.0001)
-        img.img = cv2.merge((b, g, r))
+        # b, g, r = cv2.split(img.img)
+        # b = utils.lossy_normalize(b, 0.01, 0.1)
+        # g = utils.lossy_normalize(g, 0.01, 0.0001)
+        # r = utils.lossy_normalize(r, 0.01, 0.0001)
+        # img.img = cv2.merge((b, g, r))
 
         # cv2.imshow("big", img.img)
-        diff = cv2.subtract(r, b) + cv2.subtract(g, b)
-        img.img = diff
+        # diff = cv2.subtract(r, b) + cv2.subtract(g, b)
+        # img.img = diff
         # cv2.imshow("diff_", diff)
+
+        img.img = cv2.medianBlur(img.img, 11)
 
         marked = []
         tiler = utils.tiler(img, 512, 512)
         for tile in tiler:
-            if prepare(tile.img, 20) is not None:
-                print("passed", "feature" if tile.has_feature else "")
 
-            if tile.has_feature or True:
-                values = utils.posterize_counter(tile.img, 32)
+            if tile.has_feature or False:
+                b, g, r = cv2.split(tile.img)
+                b = utils.lossy_normalize(b, 0.01, 0.0001)
+                g = utils.lossy_normalize(g, 0.00001, 0.0001)
+                r = utils.lossy_normalize(r, 0.00001, 0.0001)
+                tile.img = cv2.merge((b, g, r))
+
+                diff = cv2.add(cv2.subtract(r, b), cv2.subtract(g, b))
+                diff = utils.lossy_normalize(diff, 0.8, 0.0001, normalize=False)
+
+                values = utils.posterize_counter(diff, 32)
                 max_value = utils.cut_colors(values, 0.000001, reverse=True)
-                if max_value < 100:
-                    continue
                 print("mark")
                 min_value = utils.cut_colors(values, 0.8)
-                marked.append((tile, max_value, utils.cut_colors(values, 0.01, reverse=True)))
+
+                marked.append((tile, max_value - np.average(diff), utils.cut_colors(values, 0.01, reverse=True)))
                 print(max_value, min_value)
-                # cv2.imshow("img", tile.img)
+                cv2.imshow("img", tile.img)
                 # cv2.imshow("rgb", cv2.hconcat((r, g, b)))
-                # cv2.imshow("diff", cv2.subtract(r, b) + cv2.subtract(g, b))
-                # cv2.waitKey(0)
+                cv2.imshow("diff", diff)
+                cv2.waitKey(0)
                 # cv2.destroyAllWindows()
+        continue
         print(len(marked))
         cv2.waitKey(0)
         marked = sorted(marked, key=lambda x: x[1], reverse=True)
+        print([m[1] for m in marked])
         for m, s, v in marked:
             mi, ma = utils.minmax(m.img)
-            _, th = cv2.threshold(m.img, (mi + ma) / 2, 255, cv2.THRESH_BINARY)
+            # _, th = cv2.threshold(m.img, (mi + ma) / 2, 255, cv2.THRESH_BINARY)
             kernel = np.ones(9).reshape(3, 3)
-            th = cv2.erode(th, kernel)
-            th = cv2.dilate(th, kernel)
-            cv2.imshow("marked", th)
+            # th = cv2.erode(m.img, kernel)
+            # th = cv2.dilate(th, kernel)
+            cv2.imshow("marked", m.img)
             cv2.waitKey(0)
 
 

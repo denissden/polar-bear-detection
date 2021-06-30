@@ -47,12 +47,16 @@ def cut_colors(colors: np.array, target: float, reverse=False, n_colors: float =
             return res * factor
 
 
-def lossy_normalize(img: np.ndarray, min_cut: float, max_cut: float, accuracy: int = 8):
+def lossy_normalize(img: np.ndarray, min_cut: float, max_cut: float, accuracy: int = 8, normalize=True, subtract=True):
     colors = posterize_counter(img, accuracy)
     min_color = cut_colors(colors, min_cut)
     max_color = cut_colors(colors, max_cut, True)
 
     clipped = np.clip(img, int(min_color), int(max_color))
-    norm = cv2.normalize(clipped, None, 0, 255, cv2.NORM_MINMAX)
-    return norm
+    if subtract:
+        clipped -= np.uint8(min_color)
+    if normalize:
+        norm = cv2.normalize(clipped, None, 0, 255, cv2.NORM_MINMAX)
+        return norm
     return clipped
+

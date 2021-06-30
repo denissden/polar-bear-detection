@@ -1,11 +1,22 @@
 import os
+import cv2
+import json
 
-files = os.listdir("TEST IMAGES/withBears")
+import utils
 
-res = dict()
+PATH = "bears"
+with open("locations.json") as f:
+    data = json.load(f)
 
-for i in files:
-    res[i] = [[-1, -1], [-1, -1]]
 
-with open("locations___.json", "w+") as f:
-    f.write(str(res).replace("'", '"'))
+def main():
+    loader = utils.loader(PATH, data=data)
+
+    for img in loader:
+        b, g, r = cv2.split(img.img)
+        cv2.imshow("rgb", cv2.hconcat((r, g, b)))
+        cv2.waitKey()
+
+
+if __name__ == '__main__':
+    main()

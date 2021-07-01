@@ -19,16 +19,27 @@ class DataTile:
     pos: Tuple[int, int]
     has_feature: bool
     data: List[dict] = field(default_factory=list)
+    processed: np.ndarray = field(default=None)
+    processed_data: dict = field(default_factory=dict)
+
 
 @dataclass
 class ImagePyramid:
-    img: DataImage
-    levels: List[DataImage]
-    factor: int = 2
+    img: np.ndarray
+    levels: List[np.ndarray]
+    factor: float = 2
 
-    def __init__(self, image, f):
-        img = image
-        factor = f
+    def __init__(self, image: np.ndarray):
+        self.img = image
+        self.levels = [image]
+
+    def __next__(self):
+        last_level = self.levels[-1]
+        sy, sx = last_level.shape[:2]
+        next_level = cv2.pyrDown(last_level, dstsize=(int(sx // self.factor), int(sy // self.factor)))
+        self.levels.append(next_level)
+        return next_level
+
 
 def loader(path: str, from_: int = 0, to_: int = None, data: dict = None) -> Iterable[DataImage]:
     """

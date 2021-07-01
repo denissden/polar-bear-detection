@@ -2,6 +2,7 @@ import json
 import cv2
 import os
 import numpy as np
+from scipy.signal import find_peaks
 
 import utils
 
@@ -12,20 +13,8 @@ with open("locations.json") as f:
 
 
 def main():
-    loader = utils.loader(PATH, 0, None, data)
+    loader = utils.loader(PATH, 5, None, data)
     c = 0
-
-    with open("kernel.txt", "r") as f:
-        kernel = np.fromfile(f).reshape(64, 64, 3)
-    kernel = kernel / (np.sum(kernel) if np.sum(kernel) != 0 else 1)
-
-    kernels = []
-    for i in range(32, 100, 16):
-        k = cv2.resize(kernel, (i, i))
-        k / (np.sum(k) if np.sum(k) != 0 else 1)
-        kernels.append(k)
-
-    cv2.imshow("3", kernel)
 
     for img in loader:
         def filter_(img_):
@@ -112,46 +101,117 @@ def main():
         # cv2.imshow("diff_", diff)
 
         img.img = cv2.medianBlur(img.img, 11)
+        processed = img.img[:, :, 1].copy()
 
-        marked = []
-        tiler = utils.tiler(img, 512, 512)
+
+        all_tiles = []
+        tilex, tiley = 512, 512
+        tiler = utils.tiler(img, tilex, tiley)
         for tile in tiler:
 
-            if tile.has_feature or False:
+            if tile.has_feature or True:
                 b, g, r = cv2.split(tile.img)
-                b = utils.lossy_normalize(b, 0.01, 0.0001)
-                g = utils.lossy_normalize(g, 0.00001, 0.0001)
-                r = utils.lossy_normalize(r, 0.00001, 0.0001)
+                total_range = 0
+                b, (mi, ma) = utils.lossy_normalize(b, 0.00001, 0.0001, min_range=20, normalize=True)
+                total_range += ma - mi
+                g, (mi, ma) = utils.lossy_normalize(g, 0.00001, 0.0001, min_range=20, normalize=True)
+                total_range += ma - mi
+                r, (mi, ma) = utils.lossy_normalize(r, 0.00001, 0.0001, min_range=20, normalize=True)
+                total_range += ma - mi
+                print("-------", total_range)
                 tile.img = cv2.merge((b, g, r))
 
                 diff = cv2.add(cv2.subtract(r, b), cv2.subtract(g, b))
-                diff = utils.lossy_normalize(diff, 0.8, 0.0001, normalize=False)
+                # diff, _ = utils.lossy_normalize(diff, 0.8, 0.0001, normalize=False, subtract=False)
 
-                values = utils.posterize_counter(diff, 32)
-                max_value = utils.cut_colors(values, 0.000001, reverse=True)
-                print("mark")
-                min_value = utils.cut_colors(values, 0.8)
+                tile.processed = diff
+                tile.processed_data["range"] = total_range
+                colors = utils.posterize_counter(diff, levels=64)
+                tile.processed_data["colors"] = colors
+                tile.processed_data["mode"] = utils.cut_colors(colors, 0.5)
+                tile.processed_data["max"] = utils.cut_colors(colors, 0.000001, reverse=True)
+                all_tiles.append(tile)
 
-                marked.append((tile, max_value - np.average(diff), utils.cut_colors(values, 0.01, reverse=True)))
-                print(max_value, min_value)
-                cv2.imshow("img", tile.img)
-                # cv2.imshow("rgb", cv2.hconcat((r, g, b)))
-                cv2.imshow("diff", diff)
-                cv2.waitKey(0)
-                # cv2.destroyAllWindows()
-        continue
-        print(len(marked))
+                x, y = tile.pos
+
+                if tile.has_feature:
+                    print("feature")
+                    print(tile.processed_data)
+
+                # img.img[y:y+tiley, x:x+tilex] = tile.img
+                mode = tile.processed_data["mode"]
+                # cv2.putText(diff,
+                #             str(int(mode)),
+                #             (0, 128),
+                #             cv2.FONT_HERSHEY_SIMPLEX,
+                #             1.5,
+                #             (255 - mode,),
+                #             cv2.LINE_4)
+                # cv2.putText(diff,
+                #             str(int(tile.processed_data["max"])),
+                #             (0, 90),
+                #             cv2.FONT_HERSHEY_SIMPLEX,
+                #             1.5,
+                #             (255 - mode,),
+                #             cv2.LINE_4)
+                processed[y:y + tiley, x:x + tilex] = diff
+
+                # cv2.imshow("tile", diff)
+                # cv2.waitKey()
+
+        all_tiles = filter(lambda x: x.processed_data["mode"] < 10, all_tiles)
+        all_tiles = filter(lambda x: x.processed_data["max"] > 60, all_tiles)
+        # all_tiles = filter(lambda x: x.processed_data["mode"] > 10, all_tiles)
+        # all_tiles = filter(lambda x: x.processed_data["max"] < 60, all_tiles)
+        for i in all_tiles:
+            x_, y_ = i.pos
+            processed[y_:y_+tiley, x_:x_+tilex] = find_bear_shape(i)
+            cv2.putText(processed,
+                        "USED",
+                        (x_, y_ + 50),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.5,
+                        (255,),
+                        cv2.LINE_4)
+
+
+        for d in img.data:
+            x, y = d["pos"]
+            w, h = d["size"]
+            cv2.rectangle(img.img, (x, y), (x + w, y + h), (0, 0, 255), 4)
+
+        sy, sx = img.img.shape[:2]
+        cv2.imshow("img", cv2.resize(img.img, (sx // 4, sy // 4)))
+        cv2.imshow("diff", cv2.resize(processed, (sx // 4, sy // 4)))
         cv2.waitKey(0)
-        marked = sorted(marked, key=lambda x: x[1], reverse=True)
-        print([m[1] for m in marked])
-        for m, s, v in marked:
-            mi, ma = utils.minmax(m.img)
-            # _, th = cv2.threshold(m.img, (mi + ma) / 2, 255, cv2.THRESH_BINARY)
-            kernel = np.ones(9).reshape(3, 3)
-            # th = cv2.erode(m.img, kernel)
-            # th = cv2.dilate(th, kernel)
-            cv2.imshow("marked", m.img)
-            cv2.waitKey(0)
+
+
+kernel = np.ones((32, 32), np.float_) * -1
+cv2.circle(kernel, (16, 16), 12, 1, thickness=-1)
+kernel = kernel / (np.sum(kernel) if np.sum(kernel) != 0 else 1) * -1
+print(*kernel)
+
+
+def find_bear_shape(tile: utils.DataTile):
+    pyr = utils.ImagePyramid(tile.processed)
+    level_0 = cv2.filter2D(tile.processed, -1, kernel)
+    all_levels_filtered = [level_0]
+    for i in range(3):
+        next_level = next(pyr)
+        next_filtered = cv2.filter2D(next_level, -1, kernel)
+        all_levels_filtered.append(next_filtered)
+    res_tile = np.zeros(tile.processed.shape, np.float_)
+    if tile.has_feature or True:
+        c = 0
+        for i in all_levels_filtered:
+            c += 1
+            res_tile += cv2.resize(i, tile.processed.shape[:2][::-1])
+            cv2.imshow(f"tile{c}", i)
+        cv2.imshow(f"res", res_tile)
+        # cv2.waitKey()
+    return res_tile
+
+
 
 
 if __name__ == '__main__':

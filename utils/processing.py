@@ -19,7 +19,7 @@ def minmax(x: np.ndarray):
 @numba.jit
 def posterize_counter(x: np.ndarray, levels: int = 8, n_colors: int = 256):
     conv = x.ravel()
-    colors = [0. for i in range(levels)]
+    colors = [0. for _ in range(levels)]
     div = n_colors // levels
     for i in conv:
         colors[i // div] += 1
@@ -31,6 +31,9 @@ def cut_colors(colors: np.array, target: float, reverse=False, n_colors: float =
     accuracy = len(colors)
     if reverse:
         target = 1 - target
+
+    if target == 0 or target == 1:
+        return n_colors * target
 
     sum_ = 0.
     for i in range(accuracy):

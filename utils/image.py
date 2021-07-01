@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import os
 from dataclasses import dataclass, field
-from typing import List, Tuple, Iterable
+from typing import List, Tuple, Iterable, Any
 
 
 @dataclass
@@ -40,6 +40,18 @@ class ImagePyramid:
         self.levels.append(next_level)
         return next_level
 
+
+@dataclass
+class Point:
+    pos: Tuple[int, int]
+    tile_pos: Tuple[int, int]
+    area: float
+    color: np.ndarray
+    processed_color: int
+    range_: int
+    max_: int
+    distance: float
+    contour: np.ndarray
 
 def loader(path: str, from_: int = 0, to_: int = None, data: dict = None) -> Iterable[DataImage]:
     """
@@ -96,3 +108,6 @@ def tiler(data_img: DataImage, tx: int, ty: int, pos_key="pos", size_key="size")
                         size_key: (dw, dh)
                     })
             yield tile
+
+
+

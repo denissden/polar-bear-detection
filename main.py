@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import cv2
 import os
@@ -7,13 +8,14 @@ from scipy.signal import find_peaks
 import utils
 
 
-PATH = "TEST IMAGES/withBears"
+PATH = "TEST IMAGES/withBears"  # путь к папке
 with open("locations.json") as f:
     data = json.load(f)
 
 
 def main():
     loader = utils.loader(PATH, 0, None, data)
+    # loader = utils.loader(PATH, 0, None) # разкомментировать
     c = 0
 
     for img in loader:
@@ -44,13 +46,9 @@ def main():
                 return
 
             clipped = np.clip(img_, int(min_color), int(max_color))
-            norm = cv2.normalize(clipped, None, 0, 255, cv2.NORM_MINMAX)
-            return norm
-        def temperature(r_, g_, b_):
-            rg = r_ + g_
-            _t = rg // 2 - b_ + 10
-            return _t
-        temp = np.vectorize(temperature)
+            # norm = cv2.normalize(clipped, None, 0, 255, cv2.NORM_MINMAX)
+            return clipped
+
 
         # max_filtered = None
         # for ker in kernels[::-1]:
@@ -102,7 +100,7 @@ def main():
 
         img.img = cv2.medianBlur(img.img, 11)
         processed = img.img[:, :, 1].copy()
-
+        imgcopy = img.img.copy()
 
         all_tiles = []
         tilex, tiley = 512, 512
@@ -166,10 +164,12 @@ def main():
         filtered_tiles_2 = []
         for tile in filtered_tiles_1:
             x_, y_ = tile.pos
-            filtered_tile = find_bear_shape(tile)
+            filtered_tile = find_bear_shape(tile.processed)
             filtered_tile = np.clip(filtered_tile, 0, 255).astype(np.uint8)
 
             filtered_tile, (mi, ma) = utils.lossy_normalize(filtered_tile, 0.9, 0, normalize=False)
+            filtered_tile = cv2.blur(filtered_tile, (31, 31))
+            blur_min, blur_max = utils.minmax(filtered_tile)
 
             small_data = cv2.resize(filtered_tile, (8, 8), interpolation=cv2.INTER_AREA)
             if tile.has_feature and False:
@@ -180,6 +180,8 @@ def main():
             tile.processed = cv2.normalize(tile.processed, None, 0, 255)
 
             tile.processed_data["2max"] = max_val
+            tile.processed_data["2norm_min"] = blur_min
+            tile.processed_data["2norm_max"] = blur_max
             # tile.processed_data["2dark"] = dark_amount
 
             processed[y_:y_+tiley, x_:x_+tilex] = filtered_tile
@@ -209,7 +211,7 @@ def main():
         for tile in filtered_tiles_2_extracted:
             x_, y_ = tile.pos
             contours, _ = cv2.findContours(
-                tile.processed, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+                tile.processed, cv2.RETR_TREE, cv2.CHAIN_APPROX_TC89_KCOS)
 
             tile.processed_data["contours"] = []
             tile.processed_data["areas"] = []
@@ -228,28 +230,96 @@ def main():
 
             filtered_tiles_3.append(tile)
 
+        points = []   # point: (x, y), area
+        for tile in filtered_tiles_3:
+            x_, y_ = tile.pos
 
-        filtered_tiles_3_extracted = filter(lambda x: x.processed_data["max_area"] > 1000 and
-                                                      len(tile.processed_data["contours"]) < 10, filtered_tiles_3)
+            tile_range = tile.processed_data["range"]
+            print("range", tile_range)
+            tile_max = tile.processed_data["2norm_max"]
+
+            for c, a in zip(tile.processed_data["contours"], tile.processed_data["areas"]):
+                if a > 0:
+                    M = cv2.moments(c)
+                    center_x, center_y = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
+
+                    processed_color = tile.processed[center_y, center_x]
+
+                    global_x, global_y = x_ + center_x, y_ + center_y
+                    color = imgcopy[global_y, global_x]
+
+                    dist = utils.distance_from_center(center_x, center_y, c)
+
+                    points.append(utils.Point(pos=(global_x, global_y),
+                                              tile_pos=(x_, y_),
+                                              area=a,
+                                              color=color,
+                                              processed_color=processed_color,
+                                              range_=tile_range,
+                                              max_=tile_max,
+                                              distance=dist,
+                                              contour=c))
+
+                    blur_min = tile.processed_data["2norm_min"]
+                    blur_max = tile.processed_data["2norm_max"]
+
+        points = filter(lambda x: x.distance > 20, points)
+        points = sorted(points, key=lambda x: x.processed_color, reverse=True)
+
+        factor = int(255 / len(points) * 2)
+        c = 255
+        # for p in points[:1]:
+        for p in points[:(len(points) + 1) // 2]:
+            # cv2.circle(imgcopy, p.pos, 8, (c, int(p.processed_color), 0), thickness=-1)
+            # c -= factor
+
+            size = 50
+            x_, y_ = p.pos
+            minx = (x_ - size) if (x_ - size) > 0 else 0
+            miny = (y_ - size) if (y_ - size) > 0 else 0
+            cropped = imgcopy[miny:y_ + size, minx:x_ + size]
+            light_min, light_max = utils.minmax(cropped)
+            if light_max - light_min < 20:
+                continue
+            else:
+                cont = p.contour
+                tx, ty = p.tile_pos
+                cont[:, 0, 0] += tx
+                cont[:, 0, 1] += ty
+                print(cont)
+                cv2.drawContours(imgcopy, [cont], 0, (0, 255, 0), 5)
+                b, g, r = cv2.split(cropped.astype(np.int16))
+                total_range = 0
+                b, (mi, ma) = utils.lossy_normalize(b, 0.00001, 0.0001, min_range=20, normalize=True)
+                g, (mi, ma) = utils.lossy_normalize(g, 0.00001, 0.0001, min_range=20, normalize=True)
+                r, (mi, ma) = utils.lossy_normalize(r, 0.00001, 0.0001, min_range=20, normalize=True)
+                diff = cv2.add(cv2.subtract(r, b), cv2.subtract(g, b))
+                break
 
 
+            def temperature(r_, g_, b_):
+                rg = r_ + g_
+                _t = rg // 2 - b_ + 10
+                return _t * (rg / 255)
 
-        for tile in filtered_tiles_3_extracted:
-            ...
+            temp = np.vectorize(temperature)
 
+            temp_map = np.clip(temp(r, g, b), 0, 255).astype(np.uint8)
 
+            print(total_range)
+            cv2.imshow("crp", cropped)
+            # cv2.imshow("temp", temp_map)
+            cv2.waitKey()
 
-
-
-
-        # for d in img.data:
-        #     x, y = d["pos"]
-        #     w, h = d["size"]
-        #     cv2.rectangle(img.img, (x, y), (x + w, y + h), (0, 0, 255), 4)
+        for d in img.data:
+            x, y = d["pos"]
+            w, h = d["size"]
+            cv2.rectangle(imgcopy, (x, y), (x + w, y + h), (0, 0, 255), 4)
 
         sy, sx = img.img.shape[:2]
-        cv2.imshow("img", cv2.resize(img.img, (sx // 4, sy // 4)))
-        cv2.imshow("diff", cv2.resize(processed, (sx // 4, sy // 4)))
+        cv2.imshow("img", cv2.resize(imgcopy, (sx // 4, sy // 4)))
+        # cv2.imshow("diff", cv2.resize(processed, (sx // 4, sy // 4)))
+        # cv2.imshow("copy", imgcopy)
         cv2.waitKey(0)
 
 
@@ -259,28 +329,21 @@ kernel = kernel / (np.sum(kernel) if np.sum(kernel) != 0 else 1) * -1
 print(*kernel)
 
 
-def find_bear_shape(tile: utils.DataTile):
-    pyr = utils.ImagePyramid(tile.processed)
-    level_0 = cv2.filter2D(tile.processed, -1, kernel)
+def find_bear_shape(tile: np.ndarray):
+    pyr = utils.ImagePyramid(tile.astype(np.float))
+    level_0 = cv2.filter2D(tile, -1, kernel)
     all_levels_filtered = [level_0]
     for i in range(3):
         next_level = next(pyr)
         next_filtered = cv2.filter2D(next_level, -1, kernel)
         all_levels_filtered.append(next_filtered)
-    res_tile = np.zeros(tile.processed.shape, np.float_)
-    if tile.has_feature or True:
-        c = 0
-        for i in all_levels_filtered:
-            c += 1
-            res_tile += cv2.resize(i, tile.processed.shape[:2][::-1])
-            cv2.imshow(f"tile{c}", i)
-        cv2.imshow(f"res", res_tile)
-        # cv2.waitKey()
+    res_tile = np.zeros(tile.shape, np.float_)
+
+    c = 0
+    for i in all_levels_filtered:
+        c += 1
+        res_tile += cv2.resize(i, tile.shape[:2][::-1])
     return res_tile
-
-
-
-
 
 if __name__ == '__main__':
     main()

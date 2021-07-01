@@ -82,3 +82,13 @@ def lossy_normalize(img: np.ndarray,
         return norm, ret_data
     return clipped, ret_data
 
+
+@numba.jit
+def distance_from_center(c_x, c_y, contour):
+    distance = 0
+    for _c in contour:
+        # print(_c)
+        _x, _y = _c[0]
+        distance += abs(_x - c_x) + abs(_y - c_y)
+
+    return distance / len(contour)
